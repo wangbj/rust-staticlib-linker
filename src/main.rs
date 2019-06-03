@@ -9,6 +9,18 @@ use tempfile::tempdir;
 use log::info;
 use ar;
 
+#[macro_use]
+extern crate lazy_static;
+
+lazy_static! {
+    static ref BLACKLISTED_OBJS: HashSet<String> = {
+        let res: HashSet<_> = [
+            "__tls_get_addr.lo"
+        ].iter().map(|x| String::from(*x)).collect();
+        res
+    };
+}
+
 fn main() -> Result<()> {
     let matches = App::new("rust staticlib linker")
         .version("1.0")
@@ -100,10 +112,12 @@ fn main() -> Result<()> {
     while let Some(entry_result) = archive.next_entry() {
         let mut entry = entry_result?;
         let fname = std::str::from_utf8(entry.header().identifier()).unwrap().to_owned();
-        let fqdn = dir.path().join(&fname);
-        let mut file = File::create(fqdn.to_owned())?;
-        std::io::copy(&mut entry, &mut file)?;
-        objs.insert(fqdn.to_str().unwrap().to_string());
+        if !BLACKLISTED_OBJS.contains(&fname) {
+            let fqdn = dir.path().join(&fname);
+            let mut file = File::create(fqdn.to_owned())?;
+            std::io::copy(&mut entry, &mut file)?;
+            objs.insert(fqdn.to_str().unwrap().to_string());
+        }
     }
 
     let mut ldsfile = tempfile::NamedTempFile::new()?;
@@ -115,6 +129,7 @@ fn main() -> Result<()> {
     cmd.args(&["-o", output]);
     cmd.arg("-shared");
     cmd.arg("-fPIC");
+    cmd.arg("-flto");
     cmd.arg("-no-undefined");
     cmd.arg("-nostdlib");
     cmd.args(&["-T", ldscript.as_ref()]);
